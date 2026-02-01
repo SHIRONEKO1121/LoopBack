@@ -8,6 +8,8 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 import os
 from dotenv import load_dotenv
 
@@ -17,7 +19,11 @@ API_KEY = os.getenv('API_KEY')
 ORCHESTRATION_ID = os.getenv('ORCHESTRATION_ID')
 INSTANCE_ID = os.getenv('INSTANCE_ID')
 AGENT_ID = os.getenv('AGENT_ID')
+AGENT_ID = os.getenv('AGENT_ID')
 HOST_URL = os.getenv('HOST_URL')
+SLACK_BOT_TOKEN = os.getenv('SLACK_BOT_TOKEN')
+
+slack_client = WebClient(token=SLACK_BOT_TOKEN) if SLACK_BOT_TOKEN else None
 
 app = FastAPI(title="LoopBack AI IT Hub API")
 
@@ -65,6 +71,27 @@ def load_db():
 def save_db(data):
     with open(DB_FILE, "w") as f:
         json.dump(data, f, indent=4)
+
+def send_slack_notification(user_ids: List[str], message: str):
+    """
+    Sends a Slack message to a list of user IDs.
+    """
+    if not slack_client:
+        print("DEBUG: ⚠️ Slack client not initialized (SLACK_BOT_TOKEN missing).")
+        return
+
+    for user_id in user_ids:
+        if user_id == "User_Unknown":
+            continue
+            
+        try:
+            response = slack_client.chat_postMessage(
+                channel=user_id,
+                text=message
+            )
+            print(f"DEBUG: 📨 Slack message sent to {user_id}")
+        except SlackApiError as e:
+            print(f"DEBUG: ❌ Failed to send Slack message to {user_id}: {e.response['error']}")
 
 # --- Endpoints ---
 
@@ -142,6 +169,12 @@ async def broadcast_solution(req: BroadcastRequest):
                 ticket["status"] = "Resolved"
                 ticket["final_answer"] = req.final_answer
                 count += 1
+                
+                # --- NEW: Send Slack Notification ---
+                if ticket.get("users"):
+                   notify_msg = f"📣 *Good news!* Your IT issue has been resolved.\n\n*Issue:* {ticket.get('query')}\n*Solution:* {req.final_answer}"
+                   send_slack_notification(ticket["users"], notify_msg)
+
         print(f"DEBUG: ✅ Resolved {count} tickets in group.")
         
         # --- NEW: Save to Knowledge Base CSV ---
